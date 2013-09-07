@@ -383,9 +383,6 @@ clean_list :
 # Remove the '-' if you want to see the dependency files generated.
 -include $(SRC:.c=.d)
 
-debug: $(TARGET).elf
-	simulavr --device $(MCU) --file $(TARGET).elf -W 0x20,- -R 0x22,-
-
 # Listing of phony targets.
 .PHONY : all begin finish end sizebefore sizeafter gccversion coff extcoff \
-	clean clean_list program debug
+	clean clean_list program

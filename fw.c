@@ -2,15 +2,13 @@
 #include <avr/interrupt.h>
 #include <avr/pgmspace.h>
 #include <avr/eeprom.h>
+#include <avr/wdt.h>
 #include <util/delay.h>
 #include <stdio.h>
 #include "iomacros.h"
 #include "uart.h"
 #include "onewire.h"
 #include "ds18x20.h"
-
-// 1 - simulavr io/out, instead of uart
-#define DEBUG 0
 
 #define RELAY_PIN 4,C
 #define BOOT_RELAY_PIN 5,C
@@ -19,6 +17,8 @@
 
 // 0 - on by default (when pin is off), 1 - off
 #define NORMALLY_OPEN_RELAY 1
+
+// on my relay block on/off logic is inversed (?), so on<-->off functions considering relays
 
 uint16_t EEMEM low_boundary = 215;
 uint16_t EEMEM high_boundary = 220;
@@ -31,25 +31,51 @@ volatile char cur_state = '.';
 
 volatile int reboot = 0;
 
-int16_t measure_temp(void) {
+volatile int timer_count = 0;
+
+volatile int unsynced_count = 0;
+
+void measure_temp(void) {
   DS18X20_start_meas(DS18X20_POWER_EXTERN, NULL);
   _delay_ms(DS18B20_TCONV_12BIT);
   int16_t t;
   if(DS18X20_read_decicelsius_single(DS18B20_FAMILY_CODE, &t) == DS18X20_OK)
     cur_temp = t;
-
-  return cur_temp;
 }
 
 int16_t get_temp(void) {
   if(cur_temp == -1000) {
-    cur_temp = measure_temp();
+    measure_temp();
   }
   return cur_temp;
 }
 
-int timer_count = 0;
+void check(void) {
+  measure_temp();
+  cur_state = '.';
+  if(cur_temp < low) { //turn on
+#if NORMALLY_OPEN_RELAY
+    off(RELAY_PIN);
+#else
+    on(RELAY_PIN);
+#endif
+    cur_state = '1';
+  }
+  if(cur_temp > high) {
+#if NORMALLY_OPEN_RELAY
+    on(RELAY_PIN);
+#else
+    off(RELAY_PIN);
+#endif
+    cur_state = '0';
+  }
 
+  unsynced_count++;
+  if(unsynced_count > 10) {
+    // master device didn't connected more than 10 minutes - reboot it
+    reboot = 1;
+  }
+}
 
 ISR(TIMER1_COMPA_vect)
 {
@@ -57,54 +83,17 @@ ISR(TIMER1_COMPA_vect)
   if(timer_count == 12) {
     timer_count = 0;
 
+    check();
+
     if(reboot == 1) {
       reboot = 0;
-      on(BOOT_RELAY_PIN); // normally connected!
-      _delay_ms(1000);
       off(BOOT_RELAY_PIN);
-      return;
-    }
-
-    cur_temp = measure_temp();
-    cur_state = '.';
-    if(cur_temp < low) { //turn on
-#if NORMALLY_OPEN_RELAY
-      off(RELAY_PIN);
-#else
-      on(RELAY_PIN);
-#endif
-      cur_state = '1';
-    }
-    if(cur_temp > high) {
-#if NORMALLY_OPEN_RELAY
-      on(RELAY_PIN);
-#else
-      off(RELAY_PIN);
-#endif
-      cur_state = '0';
+      _delay_ms(5000);
+      on(BOOT_RELAY_PIN);
     }
   }
 }
 
-
-#if DEBUG
-/* This port correponds to the "-W 0x20,-" command line option. */
-#define special_output_port (*((volatile char *)0x20))
-
-/* This port correponds to the "-R 0x22,-" command line option. */
-#define special_input_port  (*((volatile char *)0x22))
-
-void outs(const char *str) {
-  const char *c;
-
-  for(c = str; *c; c++)
-    special_output_port = *c;
-}
-
-char inchar(void) {
-  return special_input_port;
-}
-#else
 void outs(const char *str) {
   uart0_puts(str);
 }
@@ -116,11 +105,17 @@ char inchar(void) {
   }
   return (char)res;
 }
-#endif
+
+char inchar_nowait(void) {
+  uint16_t res = uart0_getc();
+  return (char)res;
+}
 
 int main(void) {
   out(RELAY_PIN);
   out(BOOT_RELAY_PIN);
+  on(RELAY_PIN);
+  on(BOOT_RELAY_PIN);
 
   // init timer
   OCR1A = 39062; // 1 time in 5 s
@@ -137,19 +132,26 @@ int main(void) {
 
   ow_reset();
 
+  check();
+
+  // enable watchdog timer at longest period (about 2.1s)
+  wdt_enable(WDTO_2S);
+
   char buf[16];
-  volatile char in_char;
+  char in_char;
   char *s;
   while(1) {
-    in_char = inchar();
+    wdt_reset();
+    in_char = inchar_nowait();
     switch(in_char) {
     case 't': // return current temperature
       sprintf(buf, "%d\n", get_temp());
       outs(buf);
+      unsynced_count = 0;
       break;
     case 'b': // wait about 1 min and blink BOOT_RELAY_PIN
-      timer_count = 0;
       reboot = 1;
+      timer_count = 0;
       break;
     case 'c': // return current state (0, 1, .)
       buf[0] = cur_state;
