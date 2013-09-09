@@ -20,14 +20,15 @@
 
 // on my relay block on/off logic is inversed (?), so on<-->off functions considering relays
 
-uint16_t EEMEM low_boundary = 215;
-uint16_t EEMEM high_boundary = 220;
+uint16_t EEMEM low_boundary = 220;
+uint16_t EEMEM high_boundary = 225;
+int8_t EEMEM cur_state_saved = '0';
 
 volatile int16_t low;
 volatile int16_t high;
 
 volatile int16_t cur_temp = -1000;
-volatile char cur_state = '.';
+volatile char cur_state = '0';
 
 volatile int reboot = 0;
 
@@ -52,7 +53,6 @@ int16_t get_temp(void) {
 
 void check(void) {
   measure_temp();
-  cur_state = '.';
   if(cur_temp < low) { //turn on
 #if NORMALLY_OPEN_RELAY
     off(RELAY_PIN);
@@ -69,6 +69,8 @@ void check(void) {
 #endif
     cur_state = '0';
   }
+
+  eeprom_update_byte(&cur_state_saved, cur_state);
 
   unsynced_count++;
   if(unsynced_count > 10) {
@@ -114,7 +116,14 @@ char inchar_nowait(void) {
 int main(void) {
   out(RELAY_PIN);
   out(BOOT_RELAY_PIN);
-  on(RELAY_PIN);
+
+  low = (int16_t)eeprom_read_word(&low_boundary);
+  high = (int16_t)eeprom_read_word(&high_boundary);
+  cur_state = (char)eeprom_read_byte(&cur_state_saved);
+  if(cur_state == '0')
+    on(RELAY_PIN);
+  else
+    off(RELAY_PIN);
   on(BOOT_RELAY_PIN);
 
   // init timer
@@ -124,9 +133,6 @@ int main(void) {
   TCCR1B |= (1 << CS12) | (1 << CS10); // prescaler 1024
 
   uart0_init(UART_BAUD_SELECT(BAUD, F_CPU));
-
-  low = (int16_t)eeprom_read_word(&low_boundary);
-  high = (int16_t)eeprom_read_word(&high_boundary);
 
   sei();
 
