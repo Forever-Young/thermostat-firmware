@@ -75,6 +75,7 @@ void check(void) {
   unsynced_count++;
   if(unsynced_count > 10) {
     // master device didn't connected more than 10 minutes - reboot it
+    unsynced_count = 0;
     reboot = 1;
   }
 }
