@@ -5,7 +5,7 @@ Firmware for thermostat based on Atmel microcontroller with a DS18B20 temperatur
 
 Tested with ATmega8L.
 
-Web-interface to control settings - http://bitbucket.org/ForeverYoung/thermostat-web
+Web-interface to control settings - https://github.com/Forever-Young/thermostat-web
 
 MCU is connected by a standard scheme, without external oscillator.
 
